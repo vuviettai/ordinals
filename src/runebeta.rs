@@ -1,18 +1,30 @@
+pub mod connection;
+pub mod models;
+pub mod table;
+#[cfg(test)]
+pub(crate) mod testing;
+pub mod updater;
 use {
   self::{
-    entry::{
-      Entry, HeaderValue, InscriptionEntry, InscriptionEntryValue, InscriptionIdValue,
-      OutPointValue, RuneEntryValue, RuneIdValue, SatPointValue, SatRange, TxidValue,
-    },
-    event::Event,
-    reorg::*,
-    runes::{Rune, RuneId},
+    connection::{establish_pgconnection, WriteTransaction},
+    schema::statistics,
+    table::Table,
     updater::Updater,
   },
-  super::*,
   crate::{
+    index::{
+      entry::{
+        Entry, HeaderValue, InscriptionEntry, InscriptionEntryValue, InscriptionIdValue,
+        OutPointValue, RuneEntryValue, RuneIdValue, SatPointValue, SatRange, TxidValue,
+      },
+      event::Event,
+      reorg::*,
+      rtx,
+    },
+    runes::{Rune, RuneId},
     subcommand::{find::FindRangeOutput, server::query},
     templates::StatusHtml,
+    *,
   },
   bitcoin::block::Header,
   bitcoincore_rpc::{
@@ -22,11 +34,11 @@ use {
   chrono::SubsecRound,
   indicatif::{ProgressBar, ProgressStyle},
   log::log_enabled,
-  redb::{
-    Database, DatabaseError, MultimapTable, MultimapTableDefinition, MultimapTableHandle,
-    ReadOnlyTable, ReadableMultimapTable, ReadableTable, RepairSession, StorageError, Table,
-    TableDefinition, TableHandle, TableStats, WriteTransaction,
-  },
+  //   redb::{
+  //     Database, DatabaseError, MultimapTable, MultimapTableDefinition, MultimapTableHandle,
+  //     ReadOnlyTable, ReadableMultimapTable, ReadableTable, RepairSession, StorageError, Table,
+  //     TableDefinition, TableHandle, TableStats,
+  //   },
   std::{
     collections::HashMap,
     io::{BufWriter, Write},
@@ -34,58 +46,48 @@ use {
   },
 };
 
-pub use {self::entry::RuneEntry, entry::MintEntry};
-
-pub(crate) mod entry;
-pub mod event;
-pub(crate) mod fetcher;
-pub(crate) mod reorg;
-pub(crate) mod rtx;
-pub(crate) mod updater;
-
-#[cfg(test)]
-pub(crate) mod testing;
-
 const SCHEMA_VERSION: u64 = 18;
+pub(crate) type OutPointValue = [u8; 36];
+pub(super) type SatRange = (u64, u64);
 
-macro_rules! define_table {
-  ($name:ident, $key:ty, $value:ty) => {
-    const $name: TableDefinition<$key, $value> = TableDefinition::new(stringify!($name));
-  };
-}
+// macro_rules! define_table {
+//   ($name:ident, $key:ty, $value:ty) => {
+//     const $name: TableDefinition<$key, $value> = TableDefinition::new(stringify!($name));
+//   };
+// }
 
-macro_rules! define_multimap_table {
-  ($name:ident, $key:ty, $value:ty) => {
-    const $name: MultimapTableDefinition<$key, $value> =
-      MultimapTableDefinition::new(stringify!($name));
-  };
-}
+// macro_rules! define_multimap_table {
+//   ($name:ident, $key:ty, $value:ty) => {
+//     const $name: MultimapTableDefinition<$key, $value> =
+//       MultimapTableDefinition::new(stringify!($name));
+//   };
+// }
 
-define_multimap_table! { SATPOINT_TO_SEQUENCE_NUMBER, &SatPointValue, u32 }
-define_multimap_table! { SAT_TO_SEQUENCE_NUMBER, u64, u32 }
-define_multimap_table! { SEQUENCE_NUMBER_TO_CHILDREN, u32, u32 }
-define_table! { CONTENT_TYPE_TO_COUNT, Option<&[u8]>, u64 }
-define_table! { HEIGHT_TO_BLOCK_HEADER, u32, &HeaderValue }
-define_table! { HEIGHT_TO_LAST_SEQUENCE_NUMBER, u32, u32 }
-define_table! { HOME_INSCRIPTIONS, u32, InscriptionIdValue }
-define_table! { INSCRIPTION_ID_TO_SEQUENCE_NUMBER, InscriptionIdValue, u32 }
-define_table! { INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER, i32, u32 }
-define_table! { OUTPOINT_TO_RUNE_BALANCES, &OutPointValue, &[u8] }
-define_table! { OUTPOINT_TO_SAT_RANGES, &OutPointValue, &[u8] }
-define_table! { OUTPOINT_TO_VALUE, &OutPointValue, u64}
-define_table! { RUNE_ID_TO_RUNE_ENTRY, RuneIdValue, RuneEntryValue }
-define_table! { RUNE_TO_RUNE_ID, u128, RuneIdValue }
-define_table! { SAT_TO_SATPOINT, u64, &SatPointValue }
-define_table! { SEQUENCE_NUMBER_TO_INSCRIPTION_ENTRY, u32, InscriptionEntryValue }
-define_table! { SEQUENCE_NUMBER_TO_RUNE_ID, u32, RuneIdValue }
-define_table! { SEQUENCE_NUMBER_TO_SATPOINT, u32, &SatPointValue }
-define_table! { STATISTIC_TO_COUNT, u64, u64 }
-define_table! { TRANSACTION_ID_TO_RUNE, &TxidValue, u128 }
-define_table! { TRANSACTION_ID_TO_TRANSACTION, &TxidValue, &[u8] }
-define_table! { WRITE_TRANSACTION_STARTING_BLOCK_COUNT_TO_TIMESTAMP, u32, u128 }
+// define_multimap_table! { SATPOINT_TO_SEQUENCE_NUMBER, &SatPointValue, u32 }
+// define_multimap_table! { SAT_TO_SEQUENCE_NUMBER, u64, u32 }
+// define_multimap_table! { SEQUENCE_NUMBER_TO_CHILDREN, u32, u32 }
+// define_table! { CONTENT_TYPE_TO_COUNT, Option<&[u8]>, u64 }
+// define_table! { HEIGHT_TO_BLOCK_HEADER, u32, &HeaderValue }
+// define_table! { HEIGHT_TO_LAST_SEQUENCE_NUMBER, u32, u32 }
+// define_table! { HOME_INSCRIPTIONS, u32, InscriptionIdValue }
+// define_table! { INSCRIPTION_ID_TO_SEQUENCE_NUMBER, InscriptionIdValue, u32 }
+// define_table! { INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER, i32, u32 }
+// define_table! { OUTPOINT_TO_RUNE_BALANCES, &OutPointValue, &[u8] }
+// define_table! { OUTPOINT_TO_SAT_RANGES, &OutPointValue, &[u8] }
+// define_table! { OUTPOINT_TO_VALUE, &OutPointValue, u64}
+// define_table! { RUNE_ID_TO_RUNE_ENTRY, RuneIdValue, RuneEntryValue }
+// define_table! { RUNE_TO_RUNE_ID, u128, RuneIdValue }
+// define_table! { SAT_TO_SATPOINT, u64, &SatPointValue }
+// define_table! { SEQUENCE_NUMBER_TO_INSCRIPTION_ENTRY, u32, InscriptionEntryValue }
+// define_table! { SEQUENCE_NUMBER_TO_RUNE_ID, u32, RuneIdValue }
+// define_table! { SEQUENCE_NUMBER_TO_SATPOINT, u32, &SatPointValue }
+// define_table! { STATISTIC_TO_COUNT, u64, u64 }
+// define_table! { TRANSACTION_ID_TO_RUNE, &TxidValue, u128 }
+// define_table! { TRANSACTION_ID_TO_TRANSACTION, &TxidValue, &[u8] }
+// define_table! { WRITE_TRANSACTION_STARTING_BLOCK_COUNT_TO_TIMESTAMP, u32, u128 }
 
 #[derive(Copy, Clone)]
-pub(crate) enum Statistic {
+pub enum Statistic {
   Schema = 0,
   BlessedInscriptions = 1,
   Commits = 2,
@@ -104,7 +106,7 @@ pub(crate) enum Statistic {
 }
 
 impl Statistic {
-  fn key(self) -> u64 {
+  pub fn key(self) -> u64 {
     self.into()
   }
 }
@@ -135,32 +137,32 @@ pub(crate) struct Info {
   utxos_indexed: u64,
 }
 
-#[derive(Serialize)]
-pub(crate) struct TableInfo {
-  branch_pages: u64,
-  fragmented_bytes: u64,
-  leaf_pages: u64,
-  metadata_bytes: u64,
-  proportion: f64,
-  stored_bytes: u64,
-  total_bytes: u64,
-  tree_height: u32,
-}
+// #[derive(Serialize)]
+// pub(crate) struct TableInfo {
+//   branch_pages: u64,
+//   fragmented_bytes: u64,
+//   leaf_pages: u64,
+//   metadata_bytes: u64,
+//   proportion: f64,
+//   stored_bytes: u64,
+//   total_bytes: u64,
+//   tree_height: u32,
+// }
 
-impl From<TableStats> for TableInfo {
-  fn from(stats: TableStats) -> Self {
-    Self {
-      branch_pages: stats.branch_pages(),
-      fragmented_bytes: stats.fragmented_bytes(),
-      leaf_pages: stats.leaf_pages(),
-      metadata_bytes: stats.metadata_bytes(),
-      proportion: 0.0,
-      stored_bytes: stats.stored_bytes(),
-      total_bytes: stats.stored_bytes() + stats.metadata_bytes() + stats.fragmented_bytes(),
-      tree_height: stats.tree_height(),
-    }
-  }
-}
+// impl From<TableStats> for TableInfo {
+//   fn from(stats: TableStats) -> Self {
+//     Self {
+//       branch_pages: stats.branch_pages(),
+//       fragmented_bytes: stats.fragmented_bytes(),
+//       leaf_pages: stats.leaf_pages(),
+//       metadata_bytes: stats.metadata_bytes(),
+//       proportion: 0.0,
+//       stored_bytes: stats.stored_bytes(),
+//       total_bytes: stats.stored_bytes() + stats.metadata_bytes() + stats.fragmented_bytes(),
+//       tree_height: stats.tree_height(),
+//     }
+//   }
+// }
 
 #[derive(Serialize)]
 pub(crate) struct TransactionInfo {
@@ -204,10 +206,8 @@ impl<T> BitcoinCoreRpcResultExt<T> for Result<T, bitcoincore_rpc::Error> {
   }
 }
 
-pub struct Index {
+pub struct RuneBetaIndex {
   client: Client,
-  database: Database,
-  durability: redb::Durability,
   event_sender: Option<tokio::sync::mpsc::Sender<Event>>,
   first_inscription_height: u32,
   genesis_block_coinbase_transaction: Transaction,
@@ -223,7 +223,7 @@ pub struct Index {
   unrecoverably_reorged: AtomicBool,
 }
 
-impl Index {
+impl RuneBetaIndex {
   pub fn open(settings: &Settings) -> Result<Self> {
     Index::open_with_event_sender(settings, None)
   }
@@ -591,7 +591,7 @@ impl Index {
 
   pub fn update(&self) -> Result {
     loop {
-      let wtx = self.begin_write()?;
+      let mut wtx = self.begin_write()?;
 
       let mut updater = Updater {
         height: wtx
@@ -609,7 +609,7 @@ impl Index {
         sat_ranges_since_flush: 0,
       };
 
-      match updater.update_index(wtx) {
+      match updater.update_index(&mut wtx) {
         Ok(ok) => return Ok(ok),
         Err(err) => {
           log::info!("{}", err.to_string());
@@ -704,13 +704,15 @@ impl Index {
   }
 
   fn begin_write(&self) -> Result<WriteTransaction> {
-    let mut tx = self.database.begin_write()?;
-    tx.set_durability(self.durability);
+    // let mut tx = self.database.begin_write()?;
+    // tx.set_durability(self.durability);
+    // Todo add connection string into setting
+    let tx = WriteTransaction::new();
     Ok(tx)
   }
 
   fn increment_statistic(wtx: &WriteTransaction, statistic: Statistic, n: u64) -> Result {
-    let mut statistic_to_count = wtx.open_table(STATISTIC_TO_COUNT)?;
+    let mut statistic_to_count = wtx.open_table(statistics::table)?;
     let value = statistic_to_count
       .get(&(statistic.key()))?
       .map(|x| x.value())
@@ -2006,7 +2008,7 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
-  use {super::*, crate::index::testing::Context};
+  use {super::*, crate::runebeta::testing::Context};
 
   #[test]
   fn height_limit() {

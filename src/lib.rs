@@ -76,17 +76,18 @@ use {
   tokio::{runtime::Runtime, task},
 };
 
+//pub(crate) use self::runebeta::RuneBetaIndex as Index;
+pub(crate) use self::index::Index;
 pub use self::{
   chain::Chain,
   fee_rate::FeeRate,
-  index::{Index, MintEntry, RuneEntry},
+  index::{MintEntry, RuneEntry},
   inscriptions::{Envelope, Inscription, InscriptionId},
   object::Object,
   options::Options,
   runes::{Edict, Rune, RuneId, Runestone},
   wallet::transaction_builder::{Target, TransactionBuilder},
 };
-
 #[cfg(test)]
 #[macro_use]
 mod test;
@@ -102,7 +103,6 @@ macro_rules! tprintln {
     }
   };
 }
-
 pub mod api;
 pub mod arguments;
 mod blocktime;
@@ -115,7 +115,9 @@ mod object;
 pub mod options;
 pub mod outgoing;
 mod representation;
+//pub mod runebeta;
 pub mod runes;
+pub mod schema;
 mod server_config;
 mod settings;
 pub mod subcommand;

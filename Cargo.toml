@@ -87,6 +87,10 @@ harness = false
 name = "ord"
 path = "src/bin/main.rs"
 
+[[bin]]
+name = "wallet"
+path = "src/bin/wallet.rs"
+
 [lib]
 name = "ord"
 path = "src/lib.rs"
