@@ -12,7 +12,7 @@ pub(crate) const MAX_LIMIT: u128 = 1 << 64;
 const RESERVED: u128 = 6402364363415443603228541259936211926;
 
 mod edict;
-mod etching;
+pub mod etching;
 mod flag;
 mod mint;
 mod pile;

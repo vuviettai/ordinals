@@ -40,7 +40,7 @@ impl OrdClient {
   }
 }
 
-pub(crate) struct Wallet {
+pub struct Wallet {
   bitcoin_client: bitcoincore_rpc::Client,
   has_rune_index: bool,
   has_sat_index: bool,
@@ -55,12 +55,7 @@ pub(crate) struct Wallet {
 }
 
 impl Wallet {
-  pub(crate) fn build(
-    name: String,
-    no_sync: bool,
-    settings: Settings,
-    rpc_url: Url,
-  ) -> Result<Self> {
+  pub fn build(name: String, no_sync: bool, settings: Settings, rpc_url: Url) -> Result<Self> {
     let mut headers = header::HeaderMap::new();
 
     headers.insert(
@@ -533,15 +528,16 @@ impl Wallet {
     Ok(())
   }
 
-  pub(crate) fn initialize(name: String, settings: &Settings, seed: [u8; 64]) -> Result {
-    Self::check_version(settings.bitcoin_rpc_client(None)?)?.create_wallet(
-      &name,
-      None,
-      Some(true),
-      None,
-      None,
-    )?;
-
+  pub fn initialize(name: String, settings: &Settings, seed: [u8; 64]) -> Result {
+    // let result = Self::check_version(settings.bitcoin_rpc_client(None)?)?.create_wallet(
+    //   &name,
+    //   None,
+    //   Some(true),
+    //   None,
+    //   None,
+    // );
+    let result = Self::check_version(settings.bitcoin_rpc_client(None)?)?.load_wallet(&name);
+    println!("create wallet result {:?}", &result);
     let network = settings.chain().network();
 
     let secp = Secp256k1::new();
@@ -549,14 +545,13 @@ impl Wallet {
     let master_private_key = ExtendedPrivKey::new_master(network, &seed)?;
 
     let fingerprint = master_private_key.fingerprint(&secp);
-
+    println!("Created finguerprint");
     let derivation_path = DerivationPath::master()
       .child(ChildNumber::Hardened { index: 86 })
       .child(ChildNumber::Hardened {
         index: u32::from(network != Network::Bitcoin),
       })
       .child(ChildNumber::Hardened { index: 0 });
-
     let derived_private_key = master_private_key.derive_priv(&secp, &derivation_path)?;
 
     for change in [false, true] {

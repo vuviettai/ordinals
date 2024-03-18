@@ -119,7 +119,7 @@ mod representation;
 pub mod runes;
 pub mod schema;
 mod server_config;
-mod settings;
+pub mod settings;
 pub mod subcommand;
 mod tally;
 pub mod templates;
@@ -134,7 +134,7 @@ static INDEXER: Mutex<Option<thread::JoinHandle<()>>> = Mutex::new(None);
 const TARGET_POSTAGE: Amount = Amount::from_sat(10_000);
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn fund_raw_transaction(
+pub fn fund_raw_transaction(
   client: &Client,
   fee_rate: FeeRate,
   unfunded_transaction: &Transaction,

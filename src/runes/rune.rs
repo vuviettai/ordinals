@@ -35,7 +35,7 @@ impl Rune {
     166461473448801533683942072758341510102,
   ];
 
-  pub(crate) fn minimum_at_height(chain: Chain, height: Height) -> Self {
+  pub fn minimum_at_height(chain: Chain, height: Height) -> Self {
     let offset = height.0.saturating_add(1);
 
     const INTERVAL: u32 = SUBSIDY_HALVING_INTERVAL / 12;
